@@ -14,6 +14,7 @@ from urllib.parse import quote_plus
 import logging
 from typing import Dict, Optional
 import os
+from linkedin_profile_scraper import LinkedInProfileScraper
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -191,61 +192,27 @@ class LinkedInEnricher:
     
     def extract_profile_data(self, linkedin_url: str) -> Dict[str, str]:
         """
-        Extract data from LinkedIn public profile
+        Extract data from LinkedIn public profile using the new scraper
         """
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            # Initialize the scraper with our driver
+            scraper = LinkedInProfileScraper(self.driver)
+            
+            # Extract profile info
+            profile_data = scraper.extract_profile_info(linkedin_url)
+            
+            # Map to the expected format
+            return {
+                'linkedin_url': profile_data['linkedin_url'],
+                'headline': profile_data['description'][:200] if profile_data['description'] else '',  # Truncate for headline
+                'current_title': profile_data['job_title'],
+                'current_company': profile_data['company'],
+                'location_linkedin': '',  # We can add this later
+                'industry_linkedin': '',   # We can add this later
+                'education': '',          # We can add this later
+                'last_enriched_at': profile_data['scraped_at'],
+                'description': profile_data['description']  # Add the full description
             }
-            
-            response = requests.get(linkedin_url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Extract data from various sources
-            profile_data = {
-                'linkedin_url': linkedin_url,
-                'headline': '',
-                'current_title': '',
-                'current_company': '',
-                'location_linkedin': '',
-                'industry_linkedin': '',
-                'education': '',
-                'last_enriched_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            # Try to extract headline from title tag
-            title_tag = soup.find('title')
-            if title_tag:
-                title_text = title_tag.get_text()
-                if '|' in title_text:
-                    profile_data['headline'] = title_text.split('|')[0].strip()
-            
-            # Try to extract from meta tags
-            meta_description = soup.find('meta', {'name': 'description'})
-            if meta_description:
-                description = meta_description.get('content', '')
-                profile_data['headline'] = description[:200]  # Limit length
-            
-            # Try to extract from JSON-LD structured data
-            json_ld_scripts = soup.find_all('script', {'type': 'application/ld+json'})
-            for script in json_ld_scripts:
-                try:
-                    import json
-                    data = json.loads(script.string)
-                    if isinstance(data, dict):
-                        if 'jobTitle' in data:
-                            profile_data['current_title'] = data['jobTitle']
-                        if 'worksFor' in data:
-                            profile_data['current_company'] = data['worksFor']
-                        if 'address' in data:
-                            profile_data['location_linkedin'] = data['address']
-                except:
-                    continue
-            
-            logger.info(f"Extracted profile data for {linkedin_url}")
-            return profile_data
             
         except Exception as e:
             logger.error(f"Error extracting profile data from {linkedin_url}: {e}")
@@ -257,7 +224,8 @@ class LinkedInEnricher:
                 'location_linkedin': '',
                 'industry_linkedin': '',
                 'education': '',
-                'last_enriched_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+                'last_enriched_at': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'description': ''
             }
     
     def process_excel_file(self, file_path: str, max_records: int = None) -> pd.DataFrame:
