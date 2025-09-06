@@ -286,7 +286,7 @@ class LinkedInEnricher:
             enrichment_columns = [
                 'linkedin_url', 'headline', 'current_title', 'current_company',
                 'location_linkedin', 'industry_linkedin', 'education', 'last_enriched_at',
-                'additional_linkedin_urls'  # New column for additional URLs
+                'additional_linkedin_urls', 'description'  # Add description column
             ]
             
             for col in enrichment_columns:
@@ -347,23 +347,29 @@ class LinkedInEnricher:
 
     def save_linkedin_urls_to_csv(self, df: pd.DataFrame, output_file: str = None) -> str:
         """
-        Save LinkedIn URLs to a simple CSV file with email, linkedin_url, and additional_urls columns
+        Save LinkedIn URLs to a CSV file with email, linkedin_url, additional_urls, company, job_title, and description columns
         """
         try:
-            # Create a simple dataframe with email, linkedin_url, and additional_urls
+            # Create a dataframe with all the relevant columns
             csv_data = []
             
             for index, row in df.iterrows():
                 email = str(row.get('Email', '')).strip()
                 linkedin_url = str(row.get('linkedin_url', '')).strip()
                 additional_urls = str(row.get('additional_linkedin_urls', '')).strip()
+                company = str(row.get('current_company', '')).strip()
+                job_title = str(row.get('current_title', '')).strip()
+                description = str(row.get('description', '')).strip()
                 
                 # Only include rows where we found a LinkedIn URL
                 if linkedin_url and linkedin_url != 'nan' and linkedin_url != '':
                     csv_data.append({
                         'email': email if email != 'nan' else '',
                         'linkedin_url': linkedin_url,
-                        'additional_linkedin_urls': additional_urls if additional_urls != 'nan' else ''
+                        'additional_linkedin_urls': additional_urls if additional_urls != 'nan' else '',
+                        'company': company if company != 'nan' else '',
+                        'job_title': job_title if job_title != 'nan' else '',
+                        'description': description if description != 'nan' else ''
                     })
             
             if not csv_data:
@@ -376,16 +382,16 @@ class LinkedInEnricher:
             # Generate output filename if not provided (save to current directory)
             if not output_file:
                 timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-                output_file = f"linkedin_urls_{timestamp}.csv"
+                output_file = f"linkedin_profiles_complete_{timestamp}.csv"
             
             # Save to CSV in current directory
             csv_df.to_csv(output_file, index=False)
             
-            logger.info(f"Saved {len(csv_data)} LinkedIn URLs to {output_file}")
+            logger.info(f"Saved {len(csv_data)} complete LinkedIn profiles to {output_file}")
             return output_file
             
         except Exception as e:
-            logger.error(f"Error saving LinkedIn URLs to CSV: {e}")
+            logger.error(f"Error saving LinkedIn profiles to CSV: {e}")
             return None
 
 def main():
