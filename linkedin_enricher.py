@@ -115,10 +115,10 @@ class LinkedInEnricher:
             logger.error(f"Error checking LinkedIn login: {e}")
             return False
     
-    def search_linkedin_profile(self, first_name: str, last_name: str, company: str = "", location: str = "") -> Optional[str]:
+    def search_linkedin_profile(self, first_name: str, last_name: str, company: str = "", location: str = "") -> tuple:
         """
         Search for LinkedIn profile using Google search
-        Returns LinkedIn profile URL if found
+        Returns tuple: (primary_url, additional_urls_list)
         """
         try:
             # Construct search query
@@ -137,51 +137,57 @@ class LinkedInEnricher:
             self.driver.get(search_url)
             time.sleep(5)  # Increased wait time
             
-            # Try multiple selectors for search results
-            selectors_to_try = [
-                "div.g",
-                "div[data-ved]",
-                "div.yuRUbf",
-                "a[href*='linkedin.com/in/']"
-            ]
-            
-            links = []
-            for selector in selectors_to_try:
-                try:
-                    links = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if links:
-                        logger.info(f"Found elements with selector: {selector}")
-                        break
-                except:
-                    continue
-            
             # Look specifically for LinkedIn links
             linkedin_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='linkedin.com/in/']")
             
             if linkedin_links:
-                linkedin_url = linkedin_links[0].get_attribute('href')
-                # Clean up the URL (remove Google redirect)
-                if 'url?q=' in linkedin_url:
-                    linkedin_url = linkedin_url.split('url?q=')[1].split('&')[0]
+                # Clean up URLs (remove Google redirect)
+                clean_urls = []
+                for link in linkedin_links:
+                    url = link.get_attribute('href')
+                    if 'url?q=' in url:
+                        url = url.split('url?q=')[1].split('&')[0]
+                    clean_urls.append(url)
                 
-                logger.info(f"Found LinkedIn profile: {linkedin_url}")
+                # Remove duplicates while preserving order
+                unique_urls = []
+                seen = set()
+                for url in clean_urls:
+                    if url not in seen:
+                        unique_urls.append(url)
+                        seen.add(url)
                 
-                # Click on the LinkedIn profile
+                primary_url = unique_urls[0]
+                additional_urls = unique_urls[1:5]  # Get next 3-4 URLs (max 4 additional)
+                
+                logger.info(f"Found LinkedIn profile: {primary_url}")
+                if additional_urls:
+                    logger.info(f"Found {len(additional_urls)} additional LinkedIn URLs")
+                
+                # Click on the first LinkedIn profile
                 try:
                     linkedin_links[0].click()
-                    logger.info(f"Clicked on LinkedIn profile: {linkedin_url}")
+                    logger.info(f"Clicked on LinkedIn profile: {primary_url}")
                     time.sleep(3)  # Wait for page to load
-                    return linkedin_url
+                    
+                    # Check if we're on LinkedIn login page
+                    current_url = self.driver.current_url
+                    if "linkedin.com/authwall" in current_url or "linkedin.com/login" in current_url:
+                        logger.info("Not on LinkedIn login page. Current URL: " + current_url)
+                    else:
+                        logger.info("Successfully navigated to LinkedIn profile")
+                    
+                    return primary_url, additional_urls
                 except Exception as e:
                     logger.warning(f"Could not click LinkedIn link: {e}")
-                    return linkedin_url
+                    return primary_url, additional_urls
             else:
                 logger.info(f"No LinkedIn links found in search results for {first_name} {last_name}")
                 
         except Exception as e:
             logger.error(f"Error searching for {first_name} {last_name}: {e}")
             
-        return None
+        return None, []
     
     def extract_profile_data(self, linkedin_url: str) -> Dict[str, str]:
         """
@@ -279,7 +285,8 @@ class LinkedInEnricher:
             # Initialize enrichment columns
             enrichment_columns = [
                 'linkedin_url', 'headline', 'current_title', 'current_company',
-                'location_linkedin', 'industry_linkedin', 'education', 'last_enriched_at'
+                'location_linkedin', 'industry_linkedin', 'education', 'last_enriched_at',
+                'additional_linkedin_urls'  # New column for additional URLs
             ]
             
             for col in enrichment_columns:
@@ -300,16 +307,20 @@ class LinkedInEnricher:
                     
                     logger.info(f"Processing {index + 1}/{len(df)}: {first_name} {last_name}")
                     
-                    # Search for LinkedIn profile
-                    linkedin_url = self.search_linkedin_profile(first_name, last_name, company, location)
+                    # Search for LinkedIn profile (now returns tuple)
+                    primary_url, additional_urls = self.search_linkedin_profile(first_name, last_name, company, location)
                     
-                    if linkedin_url:
-                        # Extract profile data
-                        profile_data = self.extract_profile_data(linkedin_url)
+                    if primary_url:
+                        # Extract profile data from primary URL
+                        profile_data = self.extract_profile_data(primary_url)
                         
-                        # Update dataframe
+                        # Update dataframe with primary URL and additional URLs
+                        df.at[index, 'linkedin_url'] = primary_url
+                        df.at[index, 'additional_linkedin_urls'] = '; '.join(additional_urls) if additional_urls else ''
+                        
+                        # Update other profile data
                         for key, value in profile_data.items():
-                            if key in df.columns:
+                            if key in df.columns and key != 'linkedin_url':
                                 df.at[index, key] = value
                         
                         logger.info(f"Successfully enriched {first_name} {last_name}")
@@ -336,21 +347,23 @@ class LinkedInEnricher:
 
     def save_linkedin_urls_to_csv(self, df: pd.DataFrame, output_file: str = None) -> str:
         """
-        Save LinkedIn URLs to a simple CSV file with email and linkedin_url columns
+        Save LinkedIn URLs to a simple CSV file with email, linkedin_url, and additional_urls columns
         """
         try:
-            # Create a simple dataframe with just email and linkedin_url
+            # Create a simple dataframe with email, linkedin_url, and additional_urls
             csv_data = []
             
             for index, row in df.iterrows():
                 email = str(row.get('Email', '')).strip()
                 linkedin_url = str(row.get('linkedin_url', '')).strip()
+                additional_urls = str(row.get('additional_linkedin_urls', '')).strip()
                 
                 # Only include rows where we found a LinkedIn URL
                 if linkedin_url and linkedin_url != 'nan' and linkedin_url != '':
                     csv_data.append({
                         'email': email if email != 'nan' else '',
-                        'linkedin_url': linkedin_url
+                        'linkedin_url': linkedin_url,
+                        'additional_linkedin_urls': additional_urls if additional_urls != 'nan' else ''
                     })
             
             if not csv_data:
@@ -408,7 +421,7 @@ def main():
         if csv_file:
             print(f"\n=== CSV FILE CREATED ===")
             print(f"LinkedIn URLs saved to: {csv_file}")
-            print(f"File contains: email, linkedin_url columns")
+            print(f"File contains: email, linkedin_url, additional_linkedin_urls columns")
         else:
             print(f"\n=== NO CSV FILE CREATED ===")
             print("No LinkedIn URLs were found to save")
