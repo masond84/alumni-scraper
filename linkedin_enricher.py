@@ -24,6 +24,9 @@ class LinkedInEnricher:
         # Setup Chrome driver with stealth options
         self.driver = self._setup_driver()
         
+        # Ensure LinkedIn login
+        self.ensure_linkedin_login()
+    
     def _setup_driver(self):
         """Setup Chrome driver with stealth options"""
         chrome_options = Options()
@@ -34,14 +37,83 @@ class LinkedInEnricher:
         chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
-        # Uncomment for headless mode (runs without opening browser window)
-        # chrome_options.add_argument("--headless")
-        
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         
         return driver
+    
+    def ensure_linkedin_login(self) -> bool:
+        """
+        Ensure user is logged into LinkedIn, prompt if needed
+        Returns True if logged in
+        """
+        try:
+            # Go to LinkedIn to check login status
+            self.driver.get("https://www.linkedin.com/feed/")
+            time.sleep(5)  # Increased wait time
+            
+            # Multiple ways to check if we're logged in
+            login_indicators = [
+                # Check for feed elements
+                "[data-test-id='main-feed']",
+                # Check for navigation elements
+                "[data-test-id='global-nav']",
+                # Check for search bar (indicates logged in)
+                "input[placeholder*='Search']",
+                # Check for profile elements
+                "[data-test-id='profile-nav-item']",
+                # Check for messaging elements
+                "[data-test-id='messaging-nav-item']"
+            ]
+            
+            for indicator in login_indicators:
+                try:
+                    elements = self.driver.find_elements(By.CSS_SELECTOR, indicator)
+                    if elements:
+                        logger.info("Successfully logged into LinkedIn!")
+                        return True
+                except:
+                    continue
+            
+            # Check if we're on login page or authwall
+            current_url = self.driver.current_url.lower()
+            if ("login" in current_url or 
+                "signin" in current_url or
+                "authwall" in current_url):
+                
+                print("\n" + "="*60)
+                print("🔐 LINKEDIN LOGIN REQUIRED")
+                print("="*60)
+                print("Please login to LinkedIn in the browser window that opened.")
+                print("After logging in, press ENTER to continue...")
+                print("="*60)
+                
+                input("Press ENTER when you've completed the login...")
+                
+                # Refresh and check again
+                self.driver.refresh()
+                time.sleep(5)
+                
+                # Re-check login status
+                for indicator in login_indicators:
+                    try:
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, indicator)
+                        if elements:
+                            logger.info("LinkedIn login successful!")
+                            return True
+                    except:
+                        continue
+                
+                logger.warning("Login verification failed")
+                return False
+            else:
+                logger.info("LinkedIn login status unclear, continuing...")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error checking LinkedIn login: {e}")
+            return False
     
     def search_linkedin_profile(self, first_name: str, last_name: str, company: str = "", location: str = "") -> Optional[str]:
         """
