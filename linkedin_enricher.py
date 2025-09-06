@@ -334,6 +334,47 @@ class LinkedInEnricher:
         if self.driver:
             self.driver.quit()
 
+    def save_linkedin_urls_to_csv(self, df: pd.DataFrame, output_file: str = None) -> str:
+        """
+        Save LinkedIn URLs to a simple CSV file with email and linkedin_url columns
+        """
+        try:
+            # Create a simple dataframe with just email and linkedin_url
+            csv_data = []
+            
+            for index, row in df.iterrows():
+                email = str(row.get('Email', '')).strip()
+                linkedin_url = str(row.get('linkedin_url', '')).strip()
+                
+                # Only include rows where we found a LinkedIn URL
+                if linkedin_url and linkedin_url != 'nan' and linkedin_url != '':
+                    csv_data.append({
+                        'email': email if email != 'nan' else '',
+                        'linkedin_url': linkedin_url
+                    })
+            
+            if not csv_data:
+                logger.warning("No LinkedIn URLs found to save")
+                return None
+            
+            # Create dataframe and save to CSV
+            csv_df = pd.DataFrame(csv_data)
+            
+            # Generate output filename if not provided (save to current directory)
+            if not output_file:
+                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                output_file = f"linkedin_urls_{timestamp}.csv"
+            
+            # Save to CSV in current directory
+            csv_df.to_csv(output_file, index=False)
+            
+            logger.info(f"Saved {len(csv_data)} LinkedIn URLs to {output_file}")
+            return output_file
+            
+        except Exception as e:
+            logger.error(f"Error saving LinkedIn URLs to CSV: {e}")
+            return None
+
 def main():
     """Main function to run the enricher"""
     enricher = LinkedInEnricher()
@@ -361,6 +402,16 @@ def main():
         for index, row in enriched_df.iterrows():
             if row['linkedin_url']:
                 print(f"{row['first_name']} {row['last_name']}: {row['linkedin_url']}")
+        
+        # Save LinkedIn URLs to CSV
+        csv_file = enricher.save_linkedin_urls_to_csv(enriched_df)
+        if csv_file:
+            print(f"\n=== CSV FILE CREATED ===")
+            print(f"LinkedIn URLs saved to: {csv_file}")
+            print(f"File contains: email, linkedin_url columns")
+        else:
+            print(f"\n=== NO CSV FILE CREATED ===")
+            print("No LinkedIn URLs were found to save")
         
     except Exception as e:
         logger.error(f"Error in main process: {e}")
