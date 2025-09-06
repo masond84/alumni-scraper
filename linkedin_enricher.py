@@ -63,63 +63,54 @@ class LinkedInEnricher:
             logger.info(f"Search URL: {search_url}")
             
             self.driver.get(search_url)
-            time.sleep(3)  # Be respectful with delays
+            time.sleep(5)  # Increased wait time
             
-            # Look for LinkedIn results
-            try:
-                # Wait for search results
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.g"))
-                )
+            # Try multiple selectors for search results
+            selectors_to_try = [
+                "div.g",
+                "div[data-ved]",
+                "div.yuRUbf",
+                "a[href*='linkedin.com/in/']"
+            ]
+            
+            links = []
+            for selector in selectors_to_try:
+                try:
+                    links = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    if links:
+                        logger.info(f"Found elements with selector: {selector}")
+                        break
+                except:
+                    continue
+            
+            # Look specifically for LinkedIn links
+            linkedin_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='linkedin.com/in/']")
+            
+            if linkedin_links:
+                linkedin_url = linkedin_links[0].get_attribute('href')
+                # Clean up the URL (remove Google redirect)
+                if 'url?q=' in linkedin_url:
+                    linkedin_url = linkedin_url.split('url?q=')[1].split('&')[0]
                 
-                # Find LinkedIn links in search results
-                links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='linkedin.com/in/']")
+                logger.info(f"Found LinkedIn profile: {linkedin_url}")
                 
-                if links:
-                    linkedin_url = links[0].get_attribute('href')
-                    # Clean up the URL (remove Google redirect)
-                    if 'url?q=' in linkedin_url:
-                        linkedin_url = linkedin_url.split('url?q=')[1].split('&')[0]
-                    
-                    logger.info(f"Found LinkedIn profile: {linkedin_url}")
-                    
-                    # Click on the LinkedIn profile
-                    if self.click_linkedin_profile(linkedin_url):
-                        return linkedin_url
-                    else:
-                        return None
-                else:
-                    logger.info(f"No LinkedIn links found in search results for {first_name} {last_name}")
-                    
-            except Exception as e:
-                logger.warning(f"No LinkedIn results found for {first_name} {last_name}: {e}")
+                # Click on the LinkedIn profile
+                try:
+                    linkedin_links[0].click()
+                    logger.info(f"Clicked on LinkedIn profile: {linkedin_url}")
+                    time.sleep(3)  # Wait for page to load
+                    return linkedin_url
+                except Exception as e:
+                    logger.warning(f"Could not click LinkedIn link: {e}")
+                    return linkedin_url
+            else:
+                logger.info(f"No LinkedIn links found in search results for {first_name} {last_name}")
                 
         except Exception as e:
             logger.error(f"Error searching for {first_name} {last_name}: {e}")
             
         return None
-    def click_linkedin_profile(self, linkedin_url: str) -> bool:
-        """
-        Click on the LinkedIn profile URL found in Google search results
-        Returns True if successful, False otherwise
-        """
-        try:
-            # Find the LinkedIn link element
-            links = self.driver.find_elements(By.CSS_SELECTOR, "div.g a[href*='linkedin.com/in/']")
-            
-            if links:
-                # Click on the first LinkedIn link
-                links[0].click()
-                logger.info(f"Clicked on LinkedIn profile: {linkedin_url}")
-                time.sleep(3)  # Wait for page to load
-                return True
-            else:
-                logger.warning(f"No LinkedIn link found to click for {linkedin_url}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error clicking LinkedIn profile: {e}")
-            return False
+    
     def extract_profile_data(self, linkedin_url: str) -> Dict[str, str]:
         """
         Extract data from LinkedIn public profile
