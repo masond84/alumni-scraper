@@ -12,7 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 from urllib.parse import quote_plus
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import os
 from linkedin_profile_scraper import LinkedInProfileScraper
 
@@ -228,10 +228,10 @@ class LinkedInEnricher:
                 'description': ''
             }
     
-    def process_excel_file(self, file_path: str, max_records: int = None) -> pd.DataFrame:
+    def process_excel_file(self, file_path: str, max_records: int = None, output_file: str = None) -> pd.DataFrame:
         """
         Process Excel file and search for LinkedIn profiles
-        Returns dataframe with search results (no file saving)
+        Saves incrementally after each row is processed
         """
         try:
             # Check if file exists
@@ -254,14 +254,23 @@ class LinkedInEnricher:
             enrichment_columns = [
                 'linkedin_url', 'headline', 'current_title', 'current_company',
                 'location_linkedin', 'industry_linkedin', 'education', 'last_enriched_at',
-                'additional_linkedin_urls', 'description'  # Add description column
+                'additional_linkedin_urls', 'description'
             ]
             
             for col in enrichment_columns:
                 if col not in df.columns:
                     df[col] = ''
             
+            # Generate output filename if not provided
+            if not output_file:
+                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                output_file = f"linkedin_profiles_incremental_{timestamp}.csv"
+            
+            # Initialize the CSV file with headers
+            self._initialize_csv_file(output_file, enrichment_columns)
+            
             # Process each record
+            processed_count = 0
             for index, row in df.iterrows():
                 try:
                     first_name = str(row.get('first_name', '')).strip()
@@ -275,7 +284,7 @@ class LinkedInEnricher:
                     
                     logger.info(f"Processing {index + 1}/{len(df)}: {first_name} {last_name}")
                     
-                    # Search for LinkedIn profile (now returns tuple)
+                    # Search for LinkedIn profile
                     primary_url, additional_urls = self.search_linkedin_profile(first_name, last_name, company, location)
                     
                     if primary_url:
@@ -295,6 +304,14 @@ class LinkedInEnricher:
                     else:
                         logger.info(f"No LinkedIn profile found for {first_name} {last_name}")
                     
+                    # Save this row to CSV immediately
+                    self._save_row_to_csv(df.iloc[index], output_file)
+                    processed_count += 1
+                    
+                    # Log progress every 10 records
+                    if processed_count % 10 == 0:
+                        logger.info(f"Progress: {processed_count} records processed and saved")
+                    
                     # Be respectful with delays
                     time.sleep(2)
                     
@@ -302,11 +319,72 @@ class LinkedInEnricher:
                     logger.error(f"Error processing row {index}: {e}")
                     continue
             
+            logger.info(f"Completed processing {processed_count} records. All data saved to {output_file}")
             return df
             
         except Exception as e:
             logger.error(f"Error processing Excel file: {e}")
             raise
+
+    def _initialize_csv_file(self, output_file: str, enrichment_columns: List[str]):
+        """
+        Initialize CSV file with headers
+        """
+        try:
+            # Create headers for the CSV
+            headers = ['Email', 'first_name', 'last_name', 'company', 'location'] + enrichment_columns
+            
+            # Create the CSV file with headers
+            with open(output_file, 'w', newline='', encoding='utf-8') as f:
+                import csv
+                writer = csv.writer(f)
+                writer.writerow(headers)
+            
+            logger.info(f"Initialized CSV file: {output_file}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing CSV file: {e}")
+
+    def _save_row_to_csv(self, row: pd.Series, output_file: str):
+        """
+        Save a single row to CSV file
+        """
+        try:
+            # Prepare row data for CSV
+            row_data = {
+                'Email': str(row.get('Email', '')).strip(),
+                'first_name': str(row.get('first_name', '')).strip(),
+                'last_name': str(row.get('last_name', '')).strip(),
+                'company': str(row.get('company', '')).strip(),
+                'location': str(row.get('location', '')).strip(),
+                'linkedin_url': str(row.get('linkedin_url', '')).strip(),
+                'additional_linkedin_urls': str(row.get('additional_linkedin_urls', '')).strip(),
+                'current_title': str(row.get('current_title', '')).strip(),
+                'current_company': str(row.get('current_company', '')).strip(),
+                'description': str(row.get('description', '')).strip(),
+                'last_enriched_at': str(row.get('last_enriched_at', '')).strip()
+            }
+            
+            # Append row to CSV
+            with open(output_file, 'a', newline='', encoding='utf-8') as f:
+                import csv
+                writer = csv.writer(f)
+                writer.writerow([
+                    row_data['Email'],
+                    row_data['first_name'],
+                    row_data['last_name'],
+                    row_data['company'],
+                    row_data['location'],
+                    row_data['linkedin_url'],
+                    row_data['additional_linkedin_urls'],
+                    row_data['current_title'],
+                    row_data['current_company'],
+                    row_data['description'],
+                    row_data['last_enriched_at']
+                ])
+            
+        except Exception as e:
+            logger.error(f"Error saving row to CSV: {e}")
     
     def close(self):
         """Close the browser driver"""
@@ -372,8 +450,8 @@ def main():
         
         logger.info("Starting LinkedIn enrichment process...")
         
-        # Process the file (limit to 5 records for initial testing)
-        enriched_df = enricher.process_excel_file(input_file, max_records=5)
+        # Process the file with incremental saving
+        enriched_df = enricher.process_excel_file(input_file, max_records=None)
         
         logger.info("LinkedIn enrichment completed successfully!")
         
@@ -390,15 +468,9 @@ def main():
             if row['linkedin_url']:
                 print(f"{row['first_name']} {row['last_name']}: {row['linkedin_url']}")
         
-        # Save LinkedIn URLs to CSV
-        csv_file = enricher.save_linkedin_urls_to_csv(enriched_df)
-        if csv_file:
-            print(f"\n=== CSV FILE CREATED ===")
-            print(f"LinkedIn URLs saved to: {csv_file}")
-            print(f"File contains: email, linkedin_url, additional_linkedin_urls columns")
-        else:
-            print(f"\n=== NO CSV FILE CREATED ===")
-            print("No LinkedIn URLs were found to save")
+        print(f"\n=== INCREMENTAL SAVING ===")
+        print("Data has been saved incrementally throughout the process")
+        print("Check the generated CSV file for complete results")
         
     except Exception as e:
         logger.error(f"Error in main process: {e}")
